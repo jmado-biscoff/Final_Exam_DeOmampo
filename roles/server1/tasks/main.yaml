@@ -1,0 +1,104 @@
+---
+
+- name: Check the distribution
+  ansible.builtin.setup:
+    gather_subset:
+      - 'os_family'
+
+- name: Install dependencies on Ubuntu
+  ansible.builtin.apt:
+    name:
+      - wget
+      - tar
+      - curl
+    state: present
+  when: ansible_facts['os_family'] == 'Debian'
+
+- name: Install Apache and MariaDB on Ubuntu
+  apt:
+    name:
+      - apache2
+      - mariadb-server
+    state: present
+  when: ansible_distribution == "Ubuntu"
+
+
+- name: Start Apache service on Ubuntu
+  service:
+    name: apache2
+    state: started
+    enabled: true
+  when: ansible_distribution == "Ubuntu"
+
+- name: Start MariaDB service on Ubuntu
+  service:
+    name: mariadb
+    state: started
+    enabled: true
+  when: ansible_distribution == "Ubuntu"
+
+- name: Create Prometheus user
+  user:
+    name: prometheus
+    shell: /sbin/nologin
+
+- name: Create necessary directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: prometheus
+    group: prometheus
+    mode: '0755'
+  with_items:
+    - /etc/prometheus
+    - /var/lib/prometheus
+
+- name: Download Prometheus
+  get_url:
+    url: https://github.com/prometheus/prometheus/releases/download/v2.46.0/prometheus-2.46.0.linux-amd64.tar.gz
+    dest: /tmp/prometheus.tar.gz
+
+- name: Extract Prometheus
+  unarchive:
+    src: /tmp/prometheus.tar.gz
+    dest: /opt/
+    remote_src: yes
+
+- name: Move Prometheus binaries to /usr/local/bin
+  command: mv /opt/prometheus-2.46.0.linux-amd64/prometheus /usr/local/bin/
+
+- name: Move Prometheus cofnig to /etc/prometheus
+  command: mv /opt/prometheus-2.46.0.linux-amd64/prometheus.yml /etc/prometheus
+
+- name: Set Prometheus binary permissions
+  file:
+    path: /usr/local/bin/prometheus
+    owner: prometheus
+    group: prometheus
+    mode: '0755'
+
+- name: Create Prometheus systemd service file
+  copy:
+    dest: /etc/systemd/system/prometheus.service
+    content: |
+      [Unit]
+      Description=Prometheus
+      Wants=network-online.target
+      After=network-online.target
+
+      [Service]
+      User=prometheus
+      ExecStart=/usr/local/bin/prometheus --config.file /etc/prometheus/prometheus.yml --storage.tsdb.path /var/lib/prometheus/
+
+      [Install]
+      WantedBy=multi-user.target
+
+- name: Reload systemd
+  systemd:
+    daemon_reload: yes
+
+- name: Enable and restart Prometheus service
+  systemd:
+    name: prometheus
+    enabled: yes
+    state: started
